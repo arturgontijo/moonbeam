@@ -36,3 +36,4 @@ fc-consensus = { workspace = true }
 fc-db = { workspace = true }
 fc-rpc = { workspace = true, features = [ "rpc-binary-search-estimate" ] }
 fp-rpc = { workspace = true, features = [ "std" ] }
+fc-storage = { workspace = true }
