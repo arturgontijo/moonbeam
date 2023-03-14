@@ -4,6 +4,7 @@ members = [
 	"client/evm-tracing",
 	"client/rpc/debug",
 	"client/rpc/trace",
+	"runtime/evm_tracer",
 ]
 
 [workspace.package]
@@ -126,6 +127,7 @@ fp-ethereum = { git = "https://github.com/paritytech/frontier", branch = "polkad
 fp-evm = { git = "https://github.com/paritytech/frontier", branch = "polkadot-v0.9.38", default-features = false }
 fp-rpc = { git = "https://github.com/paritytech/frontier", branch = "polkadot-v0.9.38", default-features = false }
 fp-self-contained = { git = "https://github.com/paritytech/frontier", branch = "polkadot-v0.9.38", default-features = false }
+pallet-evm = { git = "https://github.com/paritytech/frontier", branch = "polkadot-v0.9.38", default-features = false, features = [ "forbid-evm-reentrancy" ] }
 
 # Frontier (client)
 fc-consensus = { git = "https://github.com/paritytech/frontier", branch = "polkadot-v0.9.38" }
