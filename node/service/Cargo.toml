@@ -96,7 +96,7 @@ substrate-prometheus-endpoint = { workspace = true }
 fc-consensus = { workspace = true }
 fc-db = { workspace = true }
 fc-mapping-sync = { workspace = true }
-fc-rpc = { workspace = true, features = [ "rpc-binary-search-estimate" ] }
+fc-rpc = { workspace = true }
 fc-rpc-core = { workspace = true }
 fp-consensus = { workspace = true, features = [ "std" ] }
 fp-rpc = { workspace = true, features = [ "std" ] }
