@@ -195,6 +195,7 @@ where
 					Some(((RequesterInput::Block(request_block_id), params), response_tx)) => {
 						let client = client.clone();
 						let backend = backend.clone();
+						let frontier_backend = frontier_backend.clone();
 						let permit_pool = permit_pool.clone();
 						let overrides = overrides.clone();
 
@@ -207,6 +208,7 @@ where
 										Self::handle_block_request(
 											client.clone(),
 											backend.clone(),
+											frontier_backend.clone(),
 											request_block_id,
 											params,
 											overrides.clone(),
@@ -282,27 +284,45 @@ where
 	fn handle_block_request(
 		client: Arc<C>,
 		backend: Arc<BE>,
+		frontier_backend: Arc<fc_db::Backend<B>>,
 		request_block_id: RequestBlockId,
 		params: Option<TraceParams>,
 		overrides: Arc<OverrideHandle<B>>,
 	) -> RpcResult<Response> {
 		let (tracer_input, trace_type) = Self::handle_params(params)?;
 
-		let hash: H256 = match request_block_id {
-			RequestBlockId::Number(n) => H256::from_low_u64_le(n.unique_saturated_into()),
-			RequestBlockId::Tag(RequestBlockTag::Latest) => client.info().best_hash,
-			RequestBlockId::Tag(RequestBlockTag::Earliest) => H256::from_low_u64_le(0u64),
+		let reference_id: BlockId<B> = match request_block_id {
+			RequestBlockId::Number(n) => Ok(BlockId::Number(n.unique_saturated_into())),
+			RequestBlockId::Tag(RequestBlockTag::Latest) => {
+				Ok(BlockId::Number(client.info().best_number))
+			}
+			RequestBlockId::Tag(RequestBlockTag::Earliest) => {
+				Ok(BlockId::Number(0u32.unique_saturated_into()))
+			}
 			RequestBlockId::Tag(RequestBlockTag::Pending) => {
-				return Err(internal_err("'pending' blocks are not supported"))
-			},
-			RequestBlockId::Hash(eth_hash) => eth_hash,
-		};
+				Err(internal_err("'pending' blocks are not supported"))
+			}
+			RequestBlockId::Hash(eth_hash) => {
+				match frontier_backend_client::load_hash::<B, C>(
+					client.as_ref(),
+					frontier_backend.as_ref(),
+					eth_hash,
+				) {
+					Ok(Some(hash)) => Ok(BlockId::Hash(hash)),
+					Ok(_) => Err(internal_err("Block hash not found".to_string())),
+					Err(e) => Err(e),
+				}
+			}
+		}?;
 
 		// Get ApiRef. This handle allow to keep changes between txs in an internal buffer.
 		let api = client.runtime_api();
 		// Get Blockchain backend
 		let blockchain = backend.blockchain();
-
+		// Get the header I want to work with.
+		let Ok(hash) = client.expect_block_hash_from_id(&reference_id) else {
+			return Err(internal_err("Block header not found"))
+		};
 		let header = match client.header(hash) {
 			Ok(Some(h)) => h,
 			_ => return Err(internal_err("Block header not found")),
@@ -311,10 +331,7 @@ where
 		// Get parent blockid.
 		let parent_block_id = BlockId::Hash(*header.parent_hash());
 
-		let schema = fc_storage::onchain_storage_schema::<B, C, BE>(
-			client.as_ref(),
-			hash,
-		);
+		let schema = fc_storage::onchain_storage_schema::<B, C, BE>(client.as_ref(), hash);
 
 		// Using storage overrides we align with `:ethereum_schema` which will result in proper
 		// SCALE decoding in case of migration.
@@ -325,7 +342,7 @@ where
 			_ => {
 				return Err(internal_err(format!(
 					"No storage override at {:?}",
-					hash
+					reference_id
 				)))
 			}
 		};
@@ -354,13 +371,13 @@ where
 				.map_err(|e| {
 					internal_err(format!(
 						"Blockchain error when replaying block {} : {:?}",
-						hash, e
+						reference_id, e
 					))
 				})?
 				.map_err(|e| {
 					internal_err(format!(
 						"Internal runtime error when replaying block {} : {:?}",
-						hash, e
+						reference_id, e
 					))
 				})?;
 			Ok(moonbeam_rpc_primitives_debug::Response::Block)
@@ -421,12 +438,24 @@ where
 			Err(e) => return Err(e),
 		};
 
+		let reference_id = match frontier_backend_client::load_hash::<B, C>(
+			client.as_ref(),
+			frontier_backend.as_ref(),
+			hash,
+		) {
+			Ok(Some(hash)) => BlockId::Hash(hash),
+			Ok(_) => return Err(internal_err("Block hash not found".to_string())),
+			Err(e) => return Err(e),
+		};
 		// Get ApiRef. This handle allow to keep changes between txs in an internal buffer.
 		let api = client.runtime_api();
 		// Get Blockchain backend
 		let blockchain = backend.blockchain();
-
-		let header = match client.header(hash) {
+		// Get the header I want to work with.
+		let Ok(reference_hash) = client.expect_block_hash_from_id(&reference_id) else {
+			return Err(internal_err("Block header not found"))
+		};
+		let header = match client.header(reference_hash) {
 			Ok(Some(h)) => h,
 			_ => return Err(internal_err("Block header not found")),
 		};
@@ -435,7 +464,7 @@ where
 
 		// Get block extrinsics.
 		let exts = blockchain
-			.body(hash)
+			.body(reference_hash)
 			.map_err(|e| internal_err(format!("Fail to read blockchain db: {:?}", e)))?
 			.unwrap_or_default();
 
@@ -450,19 +479,17 @@ where
 			));
 		};
 
-		let schema = fc_storage::onchain_storage_schema::<B, C, BE>(
-			client.as_ref(),
-			hash,
-		);
+		let schema =
+			fc_storage::onchain_storage_schema::<B, C, BE>(client.as_ref(), reference_hash);
 
 		// Get the block that contains the requested transaction. Using storage overrides we align
 		// with `:ethereum_schema` which will result in proper SCALE decoding in case of migration.
 		let reference_block = match overrides.schemas.get(&schema) {
-			Some(schema) => schema.current_block(hash),
+			Some(schema) => schema.current_block(reference_hash),
 			_ => {
 				return Err(internal_err(format!(
 					"No storage override at {:?}",
-					hash
+					reference_hash
 				)))
 			}
 		};
