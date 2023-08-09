@@ -15,7 +15,8 @@
 // along with Moonbeam.  If not, see <http://www.gnu.org/licenses/>.
 
 use super::*;
-use frame_benchmarking::benchmarks;
+use frame_benchmarking::{benchmarks, BenchmarkError, BenchmarkResult};
+use frame_support::dispatch::Weight;
 use pallet_xcm_benchmarks::{new_executor, XcmCallOf};
 use sp_std::vec;
 use sp_std::vec::Vec;
@@ -23,24 +24,58 @@ use xcm::latest::prelude::*;
 
 benchmarks! {
 	buy_execution {
-		let holding = T::worst_case_holding().into();
+		// TODO setting it to zero by now
+		let holding = T::worst_case_holding(0).into();
 
 		let mut executor = new_executor::<T>(Default::default());
-		executor.holding = holding;
+		executor.set_holding(holding);
 
 		let fee_asset = Concrete(MultiLocation::parent());
 
 		let instruction = Instruction::<XcmCallOf<T>>::BuyExecution {
-			fees: (fee_asset, 100_000_000).into(), // should be something inside of holding
-			weight_limit: WeightLimit::Limited(1u64),
+			fees: (fee_asset, 100_000_000u128).into(), // should be something inside of holding
+			weight_limit: WeightLimit::Limited(Weight::from_parts(1u64, xcm_primitives::DEFAULT_PROOF_SIZE)),
 		};
 
 		let xcm = Xcm(vec![instruction]);
 
 	} : {
-		executor.execute(xcm)?;
-	} verify {
+		executor.bench_process(xcm)?;
+	}
 
+	exchange_asset {
+	} : {
+		Err(BenchmarkError::Override(BenchmarkResult::from_weight(Weight::MAX)))?;
+	}
+
+	export_message {
+	} : {
+		Err(BenchmarkError::Override(BenchmarkResult::from_weight(Weight::MAX)))?;
+	}
+
+	lock_asset {
+	} : {
+		Err(BenchmarkError::Override(BenchmarkResult::from_weight(Weight::MAX)))?;
+	}
+
+	unlock_asset {
+	} : {
+		Err(BenchmarkError::Override(BenchmarkResult::from_weight(Weight::MAX)))?;
+	}
+
+	note_unlockable {
+	} : {
+		Err(BenchmarkError::Override(BenchmarkResult::from_weight(Weight::MAX)))?;
+	}
+
+	request_unlock {
+	} : {
+		Err(BenchmarkError::Override(BenchmarkResult::from_weight(Weight::MAX)))?;
+	}
+
+	universal_origin {
+	} : {
+		Err(BenchmarkError::Override(BenchmarkResult::from_weight(Weight::MAX)))?;
 	}
 
 	impl_benchmark_test_suite!(
@@ -72,8 +107,7 @@ impl<T: Config> frame_benchmarking::Benchmarking for XcmGenericBenchmarks<T> {
 		use crate::generic::Pallet as MoonbeamXcmGenericBench;
 		if MoonbeamXcmGenericBench::<T>::benchmarks(true)
 			.iter()
-			.find(|&x| x.name == extrinsic)
-			.is_some()
+			.any(|x| x.name == extrinsic)
 		{
 			MoonbeamXcmGenericBench::<T>::run_benchmark(
 				extrinsic,

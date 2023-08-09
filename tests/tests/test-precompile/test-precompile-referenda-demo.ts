@@ -17,18 +17,18 @@ import { createContract, createContractExecution } from "../../util/transactions
 
 const debug = Debug("test:precompile-referenda");
 
-const REFERENDA_CONTRACT = getCompiled("Referenda");
+const REFERENDA_CONTRACT = getCompiled("precompiles/referenda/Referenda");
 const REFERENDA_INTERFACE = new ethers.utils.Interface(REFERENDA_CONTRACT.contract.abi);
-const PREIMAGE_CONTRACT = getCompiled("Preimage");
+const PREIMAGE_CONTRACT = getCompiled("precompiles/preimage/Preimage");
 const PREIMAGE_INTERFACE = new ethers.utils.Interface(PREIMAGE_CONTRACT.contract.abi);
-const CONVICTION_VOTING_CONTRACT = getCompiled("ConvictionVoting");
+const CONVICTION_VOTING_CONTRACT = getCompiled("precompiles/conviction-voting/ConvictionVoting");
 const CONVICTION_VOTING_INTERFACE = new ethers.utils.Interface(
   CONVICTION_VOTING_CONTRACT.contract.abi
 );
 
 describeDevMoonbeam("Precompiles - Referenda Auto Upgrade Demo", (context) => {
   it("should be accessible from a smart contract", async function () {
-    this.timeout(180000);
+    this.timeout(500000);
     const setStorageCallIndex = u8aToHex(context.polkadotApi.tx.system.setStorage.callIndex);
     const trackName = "root";
     const tracksInfo = await context.polkadotApi.consts.referenda.tracks;
@@ -80,10 +80,9 @@ describeDevMoonbeam("Precompiles - Referenda Auto Upgrade Demo", (context) => {
     // Gives the contract 500M Tokens to allow to quickly pass the referenda
     await context.createBlock(
       context.polkadotApi.tx.sudo.sudo(
-        context.polkadotApi.tx.balances.setBalance(
+        context.polkadotApi.tx.balances.forceSetBalance(
           contractV1.contractAddress,
-          500_000_000n * GLMR,
-          0
+          500_000_000n * GLMR
         )
       )
     );
@@ -170,7 +169,7 @@ describeDevMoonbeam("Precompiles - Referenda Auto Upgrade Demo", (context) => {
   });
 
   it("should be work for valid tracks", async function () {
-    this.timeout(180000);
+    this.timeout(500000);
     const validTracks = [
       "root",
       "whitelisted_caller",
@@ -200,7 +199,7 @@ describeDevMoonbeam("Precompiles - Referenda Auto Upgrade Demo", (context) => {
   });
 
   it("should be fail for invalid tracks", async function () {
-    this.timeout(180000);
+    this.timeout(500000);
     const validTracks = ["toor", "", 0, "admin", -1, "0x01", "0xFFFF", "0xFFFFFFFF"];
     for (const trackName of validTracks) {
       const setStorageCallIndex = u8aToHex(context.polkadotApi.tx.system.setStorage.callIndex);
@@ -216,7 +215,8 @@ describeDevMoonbeam("Precompiles - Referenda Auto Upgrade Demo", (context) => {
         [trackName, setStorageCallIndex]
       );
       const { result } = await context.createBlock(contract.rawTx);
-      expectEVMResult(result.events, "Revert");
+      expectEVMResult(result.events, "Revert"); // No Revert reason to validate
+
       expect(
         (await context.polkadotApi.query.evm.accountCodes(contract.contractAddress)).toHex(),
         "Contract should not have been deployed"

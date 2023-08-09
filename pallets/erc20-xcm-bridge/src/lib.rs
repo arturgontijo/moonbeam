@@ -21,14 +21,12 @@
 mod erc20_matcher;
 mod erc20_trap;
 mod errors;
-mod xcm_exec_filter;
 mod xcm_holding_ext;
 
 use frame_support::pallet;
 
 pub use erc20_trap::AssetTrapWrapper;
 pub use pallet::*;
-pub use xcm_exec_filter::XcmExecuteFilterWrapper;
 pub use xcm_holding_ext::XcmExecutorWrapper;
 
 #[pallet]
@@ -40,10 +38,12 @@ pub mod pallet {
 	use ethereum_types::BigEndianHash;
 	use fp_evm::{ExitReason, ExitSucceed};
 	use frame_support::pallet_prelude::*;
-	use pallet_evm::Runner;
+	use pallet_evm::{GasWeightMapping, Runner};
 	use sp_core::{H160, H256, U256};
 	use sp_std::vec::Vec;
-	use xcm::latest::{Error as XcmError, MultiAsset, MultiLocation, Result as XcmResult};
+	use xcm::latest::{
+		Error as XcmError, MultiAsset, MultiLocation, Result as XcmResult, XcmContext,
+	};
 	use xcm_executor::traits::{Convert, Error as MatchError, MatchesFungibles};
 	use xcm_executor::Assets;
 
@@ -66,9 +66,7 @@ pub mod pallet {
 			Erc20Matcher::<T::Erc20MultilocationPrefix>::is_erc20_asset(asset)
 		}
 		pub fn weight_of_erc20_transfer() -> Weight {
-			Weight::from_ref_time(
-				T::Erc20TransferGasLimit::get().saturating_mul(T::WeightPerGas::get().ref_time()),
-			)
+			T::GasWeightMapping::gas_to_weight(T::Erc20TransferGasLimit::get(), true)
 		}
 		fn erc20_transfer(
 			erc20_contract_address: H160,
@@ -84,6 +82,9 @@ pub mod pallet {
 			// append amount to be transferred
 			input.extend_from_slice(H256::from_uint(&amount).as_bytes());
 
+			let weight_limit =
+				T::GasWeightMapping::gas_to_weight(T::Erc20TransferGasLimit::get(), true);
+
 			let exec_info = T::EvmRunner::call(
 				from,
 				erc20_contract_address,
@@ -96,6 +97,8 @@ pub mod pallet {
 				Default::default(),
 				false,
 				false,
+				Some(weight_limit),
+				Some(0),
 				&<T as pallet_evm::Config>::config(),
 			)
 			.map_err(|_| Erc20TransferError::EvmCallFail)?;
@@ -126,7 +129,11 @@ pub mod pallet {
 		// For optimization reasons, the asset we want to deposit has not really been withdrawn,
 		// we have just traced from which account it should have been withdrawn.
 		// So we will retrieve these information and make the transfer from the origin account.
-		fn deposit_asset(what: &MultiAsset, who: &MultiLocation) -> XcmResult {
+		fn deposit_asset(
+			what: &MultiAsset,
+			who: &MultiLocation,
+			_context: &XcmContext,
+		) -> XcmResult {
 			let (contract_address, amount) =
 				Erc20Matcher::<T::Erc20MultilocationPrefix>::matches_fungibles(what)?;
 
@@ -164,6 +171,7 @@ pub mod pallet {
 			asset: &MultiAsset,
 			from: &MultiLocation,
 			to: &MultiLocation,
+			_context: &XcmContext,
 		) -> Result<Assets, XcmError> {
 			let (contract_address, amount) =
 				Erc20Matcher::<T::Erc20MultilocationPrefix>::matches_fungibles(asset)?;
@@ -190,7 +198,11 @@ pub mod pallet {
 		// one (1 to withdraw the asset and a second one to deposit it).
 		// In order to perform only one evm call, we just trace the origin of the asset,
 		// and then the transfer will only really be performed in the deposit instruction.
-		fn withdraw_asset(what: &MultiAsset, who: &MultiLocation) -> Result<Assets, XcmError> {
+		fn withdraw_asset(
+			what: &MultiAsset,
+			who: &MultiLocation,
+			_context: Option<&XcmContext>,
+		) -> Result<Assets, XcmError> {
 			let (contract_address, amount) =
 				Erc20Matcher::<T::Erc20MultilocationPrefix>::matches_fungibles(what)?;
 			let who = T::AccountIdConverter::convert_ref(who)

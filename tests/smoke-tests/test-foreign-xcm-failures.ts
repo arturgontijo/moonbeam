@@ -1,15 +1,15 @@
 import "@moonbeam-network/api-augment/moonbase";
 import { expect } from "chai";
-import { getBlockArray } from "../util/block";
+import { checkTimeSliceForUpgrades, getBlockArray } from "../util/block";
 import { describeSmokeSuite } from "../util/setup-smoke-tests";
-import Bottleneck from "bottleneck";
+import { rateLimiter } from "../util/common";
 import { FrameSystemEventRecord } from "@polkadot/types/lookup";
 import { ForeignChainsEndpoints, getEndpoints } from "../util/foreign-chains";
 import { ApiPromise, WsProvider } from "@polkadot/api";
 const debug = require("debug")("smoke:foreign-xcm-fails");
 const timePeriod = process.env.TIME_PERIOD ? Number(process.env.TIME_PERIOD) : 30 * 60 * 1000;
 const timeout = Math.max(Math.floor(timePeriod / 12), 60000);
-const limiter = new Bottleneck({ maxConcurrent: 20 });
+const limiter = rateLimiter();
 
 type BlockEventsRecord = {
   blockNum: number;
@@ -52,12 +52,14 @@ describeSmokeSuite(
         return { ...chain, endpoints };
       });
 
-      const promises = chainsWithRpcs.map(async ({ name, endpoints, muted }) => {
+      const promises = chainsWithRpcs.map(async ({ name, endpoints, mutedUntil }) => {
         let blockEvents: BlockEventsRecord[];
-        if (muted === true) {
+
+        if (mutedUntil >= new Date().getTime()) {
           debug(`Network tests for ${name} has been muted, skipping.`);
           return { networkName: name, blockEvents: [] };
         }
+
         try {
           const api: ApiPromise = await new Promise((resolve, reject) => {
             const provider = new WsProvider(endpoints);
@@ -80,7 +82,21 @@ describeSmokeSuite(
             throw new Error("Cannot Connect");
           }
 
-          const blockNumArray = await getBlockArray(api, timePeriod, limiter);
+          const blockNumArray = await getBlockArray(api, timePeriod);
+
+          // Determine if the block range intersects with an upgrade event
+          const { result, specVersion: onChainRt } = await checkTimeSliceForUpgrades(
+            api,
+            blockNumArray,
+            api.consts.system.version.specVersion
+          );
+          if (result) {
+            debug(
+              `Time slice of blocks intersects with upgrade from RT ${onChainRt}, skipping chain.`
+            );
+            api.disconnect();
+            return { networkName: name, blockEvents: [] };
+          }
 
           const getEvents = async (blockNum: number) => {
             const blockHash = await limiter.schedule(() => api.rpc.chain.getBlockHash(blockNum));
@@ -90,8 +106,8 @@ describeSmokeSuite(
           };
 
           blockEvents = await Promise.all(blockNumArray.map((num) => getEvents(num)));
-          api.disconnect();
           debug(`Finished loading blocks for ${name}.`);
+          api.disconnect();
         } catch (e) {
           blockEvents = [];
         } finally {

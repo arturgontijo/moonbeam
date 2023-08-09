@@ -17,7 +17,7 @@
 // We want to avoid including the rococo-runtime here.
 // TODO: whenever a conclusion is taken from https://github.com/paritytech/substrate/issues/8158
 
-use cumulus_primitives_core::{relay_chain::v2::HrmpChannelId, ParaId};
+use cumulus_primitives_core::{relay_chain::HrmpChannelId, ParaId};
 use parity_scale_codec::{Decode, Encode};
 use sp_runtime::traits::{AccountIdLookup, StaticLookup};
 use sp_runtime::AccountId32;
@@ -36,20 +36,11 @@ pub enum RelayCall {
 	Hrmp(HrmpCall),
 }
 
-// Utility call encoding, needed for xcm transactor pallet
-#[derive(Encode, Decode)]
-
-pub enum UtilityCall {
-	#[codec(index = 1u8)]
-	AsDerivative(u16),
-}
-
 #[derive(Encode, Decode)]
 pub enum StakeCall {
 	#[codec(index = 0u16)]
 	// the index should match the position of the dispatchable in the target pallet
 	Bond(
-		<AccountIdLookup<AccountId32, ()> as StaticLookup>::Source,
 		#[codec(compact)] cumulus_primitives_core::relay_chain::Balance,
 		pallet_staking::RewardDestination<AccountId32>,
 	),
@@ -68,9 +59,16 @@ pub enum StakeCall {
 	#[codec(index = 7u16)]
 	SetPayee(pallet_staking::RewardDestination<AccountId32>),
 	#[codec(index = 8u16)]
-	SetController(<AccountIdLookup<AccountId32, ()> as StaticLookup>::Source),
+	SetController,
 	#[codec(index = 19u16)]
 	Rebond(#[codec(compact)] cumulus_primitives_core::relay_chain::Balance),
+}
+
+// Utility call encoding, needed for xcm transactor pallet
+#[derive(Encode, Decode)]
+pub enum UtilityCall {
+	#[codec(index = 1u8)]
+	AsDerivative(u16),
 }
 
 // HRMP call encoding, needed for xcm transactor pallet
@@ -82,6 +80,8 @@ pub enum HrmpCall {
 	AcceptOpenChannel(ParaId),
 	#[codec(index = 2u8)]
 	CloseChannel(HrmpChannelId),
+	#[codec(index = 6u8)]
+	CancelOpenRequest(HrmpChannelId, u32),
 }
 
 pub struct PolkadotEncoder;
@@ -115,6 +115,9 @@ impl xcm_primitives::HrmpEncodeCall for PolkadotEncoder {
 			xcm_primitives::HrmpAvailableCalls::CloseChannel(a) => {
 				Ok(RelayCall::Hrmp(HrmpCall::CloseChannel(a.clone())).encode())
 			}
+			xcm_primitives::HrmpAvailableCalls::CancelOpenRequest(a, b) => {
+				Ok(RelayCall::Hrmp(HrmpCall::CancelOpenRequest(a.clone(), b.clone())).encode())
+			}
 		}
 	}
 }
@@ -122,8 +125,8 @@ impl xcm_primitives::HrmpEncodeCall for PolkadotEncoder {
 impl pallet_evm_precompile_relay_encoder::StakeEncodeCall for PolkadotEncoder {
 	fn encode_call(call: pallet_evm_precompile_relay_encoder::AvailableStakeCalls) -> Vec<u8> {
 		match call {
-			pallet_evm_precompile_relay_encoder::AvailableStakeCalls::Bond(a, b, c) => {
-				RelayCall::Stake(StakeCall::Bond(a.into(), b, c)).encode()
+			pallet_evm_precompile_relay_encoder::AvailableStakeCalls::Bond(b, c) => {
+				RelayCall::Stake(StakeCall::Bond(b, c)).encode()
 			}
 
 			pallet_evm_precompile_relay_encoder::AvailableStakeCalls::BondExtra(a) => {
@@ -150,8 +153,8 @@ impl pallet_evm_precompile_relay_encoder::StakeEncodeCall for PolkadotEncoder {
 				RelayCall::Stake(StakeCall::SetPayee(a.into())).encode()
 			}
 
-			pallet_evm_precompile_relay_encoder::AvailableStakeCalls::SetController(a) => {
-				RelayCall::Stake(StakeCall::SetController(a.into())).encode()
+			pallet_evm_precompile_relay_encoder::AvailableStakeCalls::SetController => {
+				RelayCall::Stake(StakeCall::SetController).encode()
 			}
 
 			pallet_evm_precompile_relay_encoder::AvailableStakeCalls::Rebond(a) => {
@@ -213,7 +216,6 @@ mod tests {
 	#[test]
 	fn test_stake_bond() {
 		let mut expected_encoded: Vec<u8> = Vec::new();
-		let relay_account: AccountId32 = [1u8; 32].into();
 
 		let index = <polkadot_runtime::Runtime as frame_system::Config>::PalletInfo::index::<
 			polkadot_runtime::Staking,
@@ -222,7 +224,6 @@ mod tests {
 		expected_encoded.push(index);
 
 		let mut expected = pallet_staking::Call::<polkadot_runtime::Runtime>::bond {
-			controller: relay_account.clone().into(),
 			value: 100u32.into(),
 			payee: pallet_staking::RewardDestination::Controller,
 		}
@@ -232,7 +233,6 @@ mod tests {
 		assert_eq!(
 			<PolkadotEncoder as StakeEncodeCall>::encode_call(
 				pallet_evm_precompile_relay_encoder::AvailableStakeCalls::Bond(
-					relay_account.into(),
 					100u32.into(),
 					pallet_staking::RewardDestination::Controller
 				)
@@ -413,7 +413,6 @@ mod tests {
 	#[test]
 	fn test_set_controller() {
 		let mut expected_encoded: Vec<u8> = Vec::new();
-		let relay_account: AccountId32 = [1u8; 32].into();
 
 		let index = <polkadot_runtime::Runtime as frame_system::Config>::PalletInfo::index::<
 			polkadot_runtime::Staking,
@@ -421,17 +420,13 @@ mod tests {
 		.unwrap() as u8;
 		expected_encoded.push(index);
 
-		let mut expected = pallet_staking::Call::<polkadot_runtime::Runtime>::set_controller {
-			controller: relay_account.clone().into(),
-		}
-		.encode();
+		let mut expected =
+			pallet_staking::Call::<polkadot_runtime::Runtime>::set_controller {}.encode();
 		expected_encoded.append(&mut expected);
 
 		assert_eq!(
 			<PolkadotEncoder as StakeEncodeCall>::encode_call(
-				pallet_evm_precompile_relay_encoder::AvailableStakeCalls::SetController(
-					relay_account.clone().into()
-				)
+				pallet_evm_precompile_relay_encoder::AvailableStakeCalls::SetController
 			),
 			expected_encoded
 		);
@@ -545,6 +540,42 @@ mod tests {
 					sender: 1000u32.into(),
 					recipient: 1001u32.into()
 				})
+			),
+			Ok(expected_encoded)
+		);
+	}
+
+	#[test]
+	fn test_hrmp_cancel() {
+		let mut expected_encoded: Vec<u8> = Vec::new();
+
+		let index = <polkadot_runtime::Runtime as frame_system::Config>::PalletInfo::index::<
+			polkadot_runtime::Hrmp,
+		>()
+		.unwrap() as u8;
+		expected_encoded.push(index);
+
+		let channel_id = HrmpChannelId {
+			sender: 1u32.into(),
+			recipient: 1u32.into(),
+		};
+		let open_requests: u32 = 1;
+
+		let mut expected = polkadot_runtime_parachains::hrmp::Call::<
+			polkadot_runtime::Runtime
+		>::hrmp_cancel_open_request {
+			channel_id: channel_id.clone(),
+			open_requests
+		}
+		.encode();
+		expected_encoded.append(&mut expected);
+
+		assert_eq!(
+			<PolkadotEncoder as xcm_primitives::HrmpEncodeCall>::hrmp_encode_call(
+				xcm_primitives::HrmpAvailableCalls::CancelOpenRequest(
+					channel_id.clone(),
+					open_requests
+				)
 			),
 			Ok(expected_encoded)
 		);

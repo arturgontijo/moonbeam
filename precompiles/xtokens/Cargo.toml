@@ -11,7 +11,7 @@ num_enum = { workspace = true }
 rustc-hex = { workspace = true }
 
 # Moonbeam
-precompile-utils = { workspace = true }
+precompile-utils = { workspace = true, features = [ "codec-xcm" ] }
 xcm-primitives = { workspace = true }
 
 # Substrate
@@ -38,7 +38,7 @@ sha3 = { workspace = true }
 precompile-utils = { workspace = true, features = [ "testing" ] }
 
 # Substrate
-pallet-balances = { workspace = true }
+pallet-balances = { workspace = true, features = [ "std" ] }
 pallet-timestamp = { workspace = true }
 parity-scale-codec = { workspace = true, features = [ "max-encoded-len" ] }
 scale-info = { workspace = true, features = [ "derive" ] }
@@ -65,4 +65,9 @@ std = [
 	"sp-core/std",
 	"sp-std/std",
 	"xcm-primitives/std",
+]
+runtime-benchmarks = [
+	"frame-support/runtime-benchmarks",
+	"frame-system/runtime-benchmarks",
+	"xcm-builder/runtime-benchmarks",
 ]

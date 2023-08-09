@@ -10,13 +10,13 @@ import { describeDevMoonbeamAllEthTxTypes, describeDevMoonbeam } from "../../uti
 import { generateKeyringPair } from "../../util/accounts";
 import { BN } from "@polkadot/util";
 import type { XcmVersionedXcm } from "@polkadot/types/lookup";
-import { descendOriginFromAddress } from "../../util/xcm";
+import { descendOriginFromAddress20 } from "../../util/xcm";
 import { ALITH_TRANSACTION_TEMPLATE, createTransaction } from "../../util/transactions";
-import { expectEVMResult } from "../../util/eth-transactions";
+import { expectEVMResult, extractRevertReason } from "../../util/eth-transactions";
 
-export const CLEAR_ORIGIN_WEIGHT = 8_514_000n;
+export const CLEAR_ORIGIN_WEIGHT = 5_194_000n;
 
-const XCM_UTILS_CONTRACT = getCompiled("XcmUtils");
+const XCM_UTILS_CONTRACT = getCompiled("precompiles/xcm-utils/XcmUtils");
 const XCM_UTILSTRANSACTOR_INTERFACE = new ethers.utils.Interface(XCM_UTILS_CONTRACT.contract.abi);
 
 describeDevMoonbeamAllEthTxTypes("Precompiles - xcm utils", (context) => {
@@ -102,7 +102,7 @@ describeDevMoonbeamAllEthTxTypes("Precompiles - xcm utils", (context) => {
       ]),
     });
 
-    const { originAddress, descendOriginAddress } = descendOriginFromAddress(context);
+    const { originAddress, descendOriginAddress } = descendOriginFromAddress20(context);
     expect(result.result).to.equal(`0x${descendOriginAddress.slice(2).padStart(64, "0")}`);
   });
 
@@ -183,6 +183,7 @@ describeDevMoonbeamAllEthTxTypes("Precompiles - xcm utils", (context) => {
     await context.createBlock(
       createTransaction(context, {
         ...ALITH_TRANSACTION_TEMPLATE,
+        gas: undefined,
         to: PRECOMPILE_XCM_UTILS_ADDRESS,
         data: XCM_UTILSTRANSACTOR_INTERFACE.encodeFunctionData("xcmExecute", [
           receivedMessage.toU8a(),
@@ -231,6 +232,7 @@ describeDevMoonbeam(
       const { result } = await context.createBlock(
         createTransaction(context, {
           ...ALITH_TRANSACTION_TEMPLATE,
+          gas: undefined,
           to: PRECOMPILE_XCM_UTILS_ADDRESS,
           data: XCM_UTILSTRANSACTOR_INTERFACE.encodeFunctionData("xcmExecute", [
             receivedMessage.toU8a(),
@@ -239,6 +241,12 @@ describeDevMoonbeam(
         })
       );
       expectEVMResult(result.events, "Revert");
+
+      const revertReason = await extractRevertReason(result.hash, context.ethers);
+      // Full error expected:
+      // Dispatched call failed with error: Module(ModuleError { index: 0, error: [5, 0, 0, 0],
+      //  message: Some("CallFiltered") })
+      expect(revertReason).to.contain("CallFiltered");
     });
   },
   "Legacy",
@@ -276,7 +284,8 @@ describeDevMoonbeam(
       const { result } = await context.createBlock(
         createTransaction(context, {
           ...ALITH_TRANSACTION_TEMPLATE,
-          gasPrice: 100_000_000_000,
+          gas: undefined,
+          gasPrice: 1_000_000_000_000,
           to: PRECOMPILE_XCM_UTILS_ADDRESS,
           data: XCM_UTILSTRANSACTOR_INTERFACE.encodeFunctionData("xcmExecute", [
             receivedMessage.toU8a(),
@@ -285,6 +294,12 @@ describeDevMoonbeam(
         })
       );
       expectEVMResult(result.events, "Revert");
+
+      const revertReason = await extractRevertReason(result.hash, context.ethers);
+      // Full error expected:
+      // Dispatched call failed with error: Module(ModuleError { index: 0, error: [5, 0, 0, 0],
+      // message: Some("CallFiltered") })
+      expect(revertReason).to.contain("CallFiltered");
     });
   },
   "Legacy",
@@ -458,6 +473,11 @@ describeDevMoonbeamAllEthTxTypes("Precompiles - xcm utils", (context) => {
     // Verify the result
     // Expect success
     expectEVMResult(resultHere.events, "Revert");
+    const revertReason = await extractRevertReason(resultHere.hash, context.ethers);
+    // Full error expected:
+    // Dispatched call failed with error: Module(ModuleError { index: 28, error: [0, 0, 0, 0],
+    // message: Some("Unreachable") })
+    expect(revertReason).to.contain("Unreachable");
 
     // Try sending it with para relay view
     const { result: resultParaRelayView } = await context.createBlock(
@@ -474,6 +494,11 @@ describeDevMoonbeamAllEthTxTypes("Precompiles - xcm utils", (context) => {
     // Verify the result
     // Expect success
     expectEVMResult(resultParaRelayView.events, "Revert");
+    const revertReason2 = await extractRevertReason(resultHere.hash, context.ethers);
+    // Full error expected:
+    // Dispatched call failed with error: Module(ModuleError { index: 28, error: [0, 0, 0, 0],
+    // message: Some("Unreachable") })
+    expect(revertReason2).to.contain("Unreachable");
 
     // Try sending it with another para view (parents 1)
     const { result: resultParaOtherParaView } = await context.createBlock(
@@ -490,5 +515,11 @@ describeDevMoonbeamAllEthTxTypes("Precompiles - xcm utils", (context) => {
     // Verify the result
     // Expect success
     expectEVMResult(resultParaOtherParaView.events, "Revert");
+
+    const revertReason3 = await extractRevertReason(resultParaOtherParaView.hash, context.ethers);
+    // Full error expected:
+    // Dispatched call failed with error: Module(ModuleError { index: 28, error: [1, 0, 0, 0],
+    // message: Some("SendFailure") })
+    expect(revertReason3).to.contain("SendFailure");
   });
 });

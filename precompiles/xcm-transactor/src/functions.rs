@@ -18,7 +18,7 @@
 
 use fp_evm::PrecompileHandle;
 use frame_support::{
-	dispatch::{Dispatchable, GetDispatchInfo, PostDispatchInfo},
+	dispatch::{Dispatchable, GetDispatchInfo, PostDispatchInfo, Weight},
 	traits::ConstU32,
 };
 use pallet_evm::AddressMapping;
@@ -26,7 +26,7 @@ use pallet_xcm_transactor::{
 	Currency, CurrencyPayment, RemoteTransactInfoWithMaxWeight, TransactWeights,
 };
 use precompile_utils::prelude::*;
-use sp_core::{H160, U256};
+use sp_core::{MaxEncodedLen, H160, U256};
 use sp_std::{
 	boxed::Box,
 	convert::{TryFrom, TryInto},
@@ -34,7 +34,9 @@ use sp_std::{
 	vec::Vec,
 };
 use xcm::latest::MultiLocation;
-use xcm_primitives::{AccountIdToCurrencyId, UtilityAvailableCalls, UtilityEncodeCall};
+use xcm_primitives::{
+	AccountIdToCurrencyId, UtilityAvailableCalls, UtilityEncodeCall, DEFAULT_PROOF_SIZE,
+};
 
 /// A precompile to wrap the functionality from xcm transactor
 pub struct XcmTransactorWrapper<Runtime>(PhantomData<Runtime>);
@@ -59,7 +61,8 @@ where
 		handle: &mut impl PrecompileHandle,
 		index: u16,
 	) -> EvmResult<Address> {
-		handle.record_cost(RuntimeHelper::<Runtime>::db_read_gas_cost())?;
+		// storage item: IndexToAccount: Blake2_128(16) + u16(2) + AccountId(20)
+		handle.record_db_read::<Runtime>(38)?;
 
 		// fetch data from pallet
 		let account: H160 = pallet_xcm_transactor::Pallet::<Runtime>::index_to_account(index)
@@ -73,22 +76,28 @@ where
 		handle: &mut impl PrecompileHandle,
 		multilocation: MultiLocation,
 	) -> EvmResult<(u64, U256, u64)> {
-		handle.record_cost(2 * RuntimeHelper::<Runtime>::db_read_gas_cost())?;
-
 		// fetch data from pallet
+		// storage item: TransactInfoWithWeightLimit: Blake2_128(16) + MultiLocation
+		// + RemoteTransactInfoWithMaxWeight
+		handle.record_db_read::<Runtime>(
+			16 + MultiLocation::max_encoded_len()
+				+ RemoteTransactInfoWithMaxWeight::max_encoded_len(),
+		)?;
 		let remote_transact_info: RemoteTransactInfoWithMaxWeight =
 			pallet_xcm_transactor::Pallet::<Runtime>::transact_info(&multilocation)
 				.ok_or(revert("Transact Info not set"))?;
 
 		// fetch data from pallet
+		// storage item: AssetTypeUnitsPerSecond: Blake2_128(16) + MultiLocation + u128(16)
+		handle.record_db_read::<Runtime>(32 + MultiLocation::max_encoded_len())?;
 		let fee_per_second: u128 =
 			pallet_xcm_transactor::Pallet::<Runtime>::dest_asset_fee_per_second(&multilocation)
 				.ok_or(revert("Fee Per Second not set"))?;
 
 		Ok((
-			remote_transact_info.transact_extra_weight,
+			remote_transact_info.transact_extra_weight.ref_time(),
 			fee_per_second.into(),
-			remote_transact_info.max_weight,
+			remote_transact_info.max_weight.ref_time(),
 		))
 	}
 
@@ -96,21 +105,25 @@ where
 		handle: &mut impl PrecompileHandle,
 		multilocation: MultiLocation,
 	) -> EvmResult<(u64, u64, u64)> {
-		handle.record_cost(1 * RuntimeHelper::<Runtime>::db_read_gas_cost())?;
-
 		// fetch data from pallet
+		// storage item: TransactInfoWithWeightLimit: Blake2_128(16) + MultiLocation
+		// + RemoteTransactInfoWithMaxWeight
+		handle.record_db_read::<Runtime>(
+			16 + MultiLocation::max_encoded_len()
+				+ RemoteTransactInfoWithMaxWeight::max_encoded_len(),
+		)?;
 		let remote_transact_info: RemoteTransactInfoWithMaxWeight =
 			pallet_xcm_transactor::Pallet::<Runtime>::transact_info(multilocation)
 				.ok_or(revert("Transact Info not set"))?;
 
 		let transact_extra_weight_signed = remote_transact_info
 			.transact_extra_weight_signed
-			.unwrap_or(0);
+			.unwrap_or(Weight::zero());
 
 		Ok((
-			remote_transact_info.transact_extra_weight,
-			transact_extra_weight_signed,
-			remote_transact_info.max_weight,
+			remote_transact_info.transact_extra_weight.ref_time(),
+			transact_extra_weight_signed.ref_time(),
+			remote_transact_info.max_weight.ref_time(),
 		))
 	}
 
@@ -118,9 +131,9 @@ where
 		handle: &mut impl PrecompileHandle,
 		multilocation: MultiLocation,
 	) -> EvmResult<U256> {
-		handle.record_cost(1 * RuntimeHelper::<Runtime>::db_read_gas_cost())?;
-
 		// fetch data from pallet
+		// storage item: AssetTypeUnitsPerSecond: Blake2_128(16) + MultiLocation + u128(16)
+		handle.record_db_read::<Runtime>(32 + MultiLocation::max_encoded_len())?;
 		let fee_per_second: u128 =
 			pallet_xcm_transactor::Pallet::<Runtime>::dest_asset_fee_per_second(multilocation)
 				.ok_or(revert("Fee Per Second not set"))?;
@@ -148,14 +161,21 @@ where
 			dest: transactor,
 			index,
 			fee: CurrencyPayment {
-				currency: Currency::AsMultiLocation(Box::new(xcm::VersionedMultiLocation::V1(
+				currency: Currency::AsMultiLocation(Box::new(xcm::VersionedMultiLocation::V3(
 					fee_asset,
 				))),
 				fee_amount: None,
 			},
 			inner_call,
 			weight_info: TransactWeights {
-				transact_required_weight_at_most: weight,
+				// TODO overall weight None means we will retrieve the allowed proof size from storage.
+				// In the v2 to v3 migration we set this value to DEFAULT_PROOF_SIZE, so setting
+				// require_weight_at_most to DEFAULT_PROOF_SIZE/2 makes sense. Although we might
+				// want to revisit this to use whatever storage value there is and divide it by 2.
+				transact_required_weight_at_most: Weight::from_parts(
+					weight,
+					DEFAULT_PROOF_SIZE.saturating_div(2),
+				),
 				overall_weight: None,
 			},
 		};
@@ -188,15 +208,18 @@ where
 			dest: transactor,
 			index,
 			fee: CurrencyPayment {
-				currency: Currency::AsMultiLocation(Box::new(xcm::VersionedMultiLocation::V1(
+				currency: Currency::AsMultiLocation(Box::new(xcm::VersionedMultiLocation::V3(
 					fee_asset,
 				))),
 				fee_amount: Some(fee_amount),
 			},
 			inner_call,
 			weight_info: TransactWeights {
-				transact_required_weight_at_most: weight,
-				overall_weight: Some(overall_weight),
+				transact_required_weight_at_most: Weight::from_parts(
+					weight,
+					DEFAULT_PROOF_SIZE.saturating_div(2),
+				),
+				overall_weight: Some(Weight::from_parts(overall_weight, DEFAULT_PROOF_SIZE)),
 			},
 		};
 
@@ -213,6 +236,10 @@ where
 		weight: u64,
 		inner_call: BoundedBytes<GetDataLimit>,
 	) -> EvmResult {
+		// No DB access before try_dispatch but lot of logical stuff
+		// To prevent spam, we charge an arbitrary amoun of gas
+		handle.record_cost(1000)?;
+
 		let transactor = transactor
 			.try_into()
 			.map_err(|_| RevertReason::custom("Non-existent transactor").in_field("transactor"))?;
@@ -221,8 +248,6 @@ where
 		let to_account = Runtime::AddressMapping::into_account_id(currency_id.0);
 
 		// We convert the address into a currency
-		// This involves a DB read in moonbeam, hence the db Read
-		handle.record_cost(RuntimeHelper::<Runtime>::db_read_gas_cost())?;
 		let currency_id: <Runtime as pallet_xcm_transactor::Config>::CurrencyId =
 			Runtime::account_to_currency_id(to_account)
 				.ok_or(revert("cannot convert into currency id"))?;
@@ -238,7 +263,10 @@ where
 				fee_amount: None,
 			},
 			weight_info: TransactWeights {
-				transact_required_weight_at_most: weight,
+				transact_required_weight_at_most: Weight::from_parts(
+					weight,
+					DEFAULT_PROOF_SIZE.saturating_div(2),
+				),
 				overall_weight: None,
 			},
 			inner_call,
@@ -259,6 +287,10 @@ where
 		fee_amount: u128,
 		overall_weight: u64,
 	) -> EvmResult {
+		// No DB access before try_dispatch but lot of logical stuff
+		// To prevent spam, we charge an arbitrary amoun of gas
+		handle.record_cost(1000)?;
+
 		let transactor = transactor
 			.try_into()
 			.map_err(|_| RevertReason::custom("Non-existent transactor").in_field("transactor"))?;
@@ -268,8 +300,6 @@ where
 		let to_account = Runtime::AddressMapping::into_account_id(to_address);
 
 		// We convert the address into a currency
-		// This involves a DB read in moonbeam, hence the db Read
-		handle.record_cost(RuntimeHelper::<Runtime>::db_read_gas_cost())?;
 		let currency_id: <Runtime as pallet_xcm_transactor::Config>::CurrencyId =
 			Runtime::account_to_currency_id(to_account)
 				.ok_or(revert("cannot convert into currency id"))?;
@@ -285,8 +315,11 @@ where
 				fee_amount: Some(fee_amount),
 			},
 			weight_info: TransactWeights {
-				transact_required_weight_at_most: weight,
-				overall_weight: Some(overall_weight),
+				transact_required_weight_at_most: Weight::from_parts(
+					weight,
+					DEFAULT_PROOF_SIZE.saturating_div(2),
+				),
+				overall_weight: Some(Weight::from_parts(overall_weight, DEFAULT_PROOF_SIZE)),
 			},
 			inner_call,
 		};
@@ -309,15 +342,18 @@ where
 		// moonbeam, as we are using IdentityMapping
 		let origin = Runtime::AddressMapping::into_account_id(handle.context().caller);
 		let call = pallet_xcm_transactor::Call::<Runtime>::transact_through_signed {
-			dest: Box::new(xcm::VersionedMultiLocation::V1(dest)),
+			dest: Box::new(xcm::VersionedMultiLocation::V3(dest)),
 			fee: CurrencyPayment {
-				currency: Currency::AsMultiLocation(Box::new(xcm::VersionedMultiLocation::V1(
+				currency: Currency::AsMultiLocation(Box::new(xcm::VersionedMultiLocation::V3(
 					fee_asset,
 				))),
 				fee_amount: None,
 			},
 			weight_info: TransactWeights {
-				transact_required_weight_at_most: weight,
+				transact_required_weight_at_most: Weight::from_parts(
+					weight,
+					DEFAULT_PROOF_SIZE.saturating_div(2),
+				),
 				overall_weight: None,
 			},
 			call,
@@ -343,16 +379,19 @@ where
 		// moonbeam, as we are using IdentityMapping
 		let origin = Runtime::AddressMapping::into_account_id(handle.context().caller);
 		let call = pallet_xcm_transactor::Call::<Runtime>::transact_through_signed {
-			dest: Box::new(xcm::VersionedMultiLocation::V1(dest)),
+			dest: Box::new(xcm::VersionedMultiLocation::V3(dest)),
 			fee: CurrencyPayment {
-				currency: Currency::AsMultiLocation(Box::new(xcm::VersionedMultiLocation::V1(
+				currency: Currency::AsMultiLocation(Box::new(xcm::VersionedMultiLocation::V3(
 					fee_asset,
 				))),
 				fee_amount: Some(fee_amount),
 			},
 			weight_info: TransactWeights {
-				transact_required_weight_at_most: weight,
-				overall_weight: Some(overall_weight),
+				transact_required_weight_at_most: Weight::from_parts(
+					weight,
+					DEFAULT_PROOF_SIZE.saturating_div(2),
+				),
+				overall_weight: Some(Weight::from_parts(overall_weight, DEFAULT_PROOF_SIZE)),
 			},
 			call,
 		};
@@ -369,14 +408,16 @@ where
 		weight: u64,
 		call: BoundedBytes<GetDataLimit>,
 	) -> EvmResult {
+		// No DB access before try_dispatch but lot of logical stuff
+		// To prevent spam, we charge an arbitrary amoun of gas
+		handle.record_cost(1000)?;
+
 		let to_address: H160 = fee_asset.into();
 		let to_account = Runtime::AddressMapping::into_account_id(to_address);
 
 		let call: Vec<_> = call.into();
 
 		// We convert the address into a currency
-		// This involves a DB read in moonbeam, hence the db Read
-		handle.record_cost(RuntimeHelper::<Runtime>::db_read_gas_cost())?;
 		let currency_id: <Runtime as pallet_xcm_transactor::Config>::CurrencyId =
 			Runtime::account_to_currency_id(to_account)
 				.ok_or(revert("cannot convert into currency id"))?;
@@ -385,13 +426,16 @@ where
 		// moonbeam, as we are using IdentityMapping
 		let origin = Runtime::AddressMapping::into_account_id(handle.context().caller);
 		let call = pallet_xcm_transactor::Call::<Runtime>::transact_through_signed {
-			dest: Box::new(xcm::VersionedMultiLocation::V1(dest)),
+			dest: Box::new(xcm::VersionedMultiLocation::V3(dest)),
 			fee: CurrencyPayment {
 				currency: Currency::AsCurrencyId(currency_id),
 				fee_amount: None,
 			},
 			weight_info: TransactWeights {
-				transact_required_weight_at_most: weight,
+				transact_required_weight_at_most: Weight::from_parts(
+					weight,
+					DEFAULT_PROOF_SIZE.saturating_div(2),
+				),
 				overall_weight: None,
 			},
 			call,
@@ -411,14 +455,16 @@ where
 		fee_amount: u128,
 		overall_weight: u64,
 	) -> EvmResult {
+		// No DB access before try_dispatch but lot of logical stuff
+		// To prevent spam, we charge an arbitrary amoun of gas
+		handle.record_cost(1000)?;
+
 		let to_address: H160 = fee_asset.into();
 		let to_account = Runtime::AddressMapping::into_account_id(to_address);
 
 		let call: Vec<_> = call.into();
 
 		// We convert the address into a currency
-		// This involves a DB read in moonbeam, hence the db Read
-		handle.record_cost(1 * RuntimeHelper::<Runtime>::db_read_gas_cost())?;
 		let currency_id: <Runtime as pallet_xcm_transactor::Config>::CurrencyId =
 			Runtime::account_to_currency_id(to_account)
 				.ok_or(revert("cannot convert into currency id"))?;
@@ -427,14 +473,17 @@ where
 		// moonbeam, as we are using IdentityMapping
 		let origin = Runtime::AddressMapping::into_account_id(handle.context().caller);
 		let call = pallet_xcm_transactor::Call::<Runtime>::transact_through_signed {
-			dest: Box::new(xcm::VersionedMultiLocation::V1(dest)),
+			dest: Box::new(xcm::VersionedMultiLocation::V3(dest)),
 			fee: CurrencyPayment {
 				currency: Currency::AsCurrencyId(currency_id),
 				fee_amount: Some(fee_amount),
 			},
 			weight_info: TransactWeights {
-				transact_required_weight_at_most: weight,
-				overall_weight: Some(overall_weight),
+				transact_required_weight_at_most: Weight::from_parts(
+					weight,
+					DEFAULT_PROOF_SIZE.saturating_div(2),
+				),
+				overall_weight: Some(Weight::from_parts(overall_weight, DEFAULT_PROOF_SIZE)),
 			},
 			call,
 		};
@@ -450,7 +499,10 @@ where
 		index: u16,
 		inner_call: BoundedBytes<GetDataLimit>,
 	) -> EvmResult<UnboundedBytes> {
-		handle.record_cost(RuntimeHelper::<Runtime>::db_read_gas_cost())?;
+		// There is no DB read in this function,
+		// we just account an arbitrary amount of gas to prevent spam
+		// TODO replace by proper benchmarks
+		handle.record_cost(1000)?;
 
 		let transactor: TransactorOf<Runtime> = transactor
 			.try_into()

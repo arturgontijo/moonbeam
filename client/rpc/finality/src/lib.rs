@@ -19,32 +19,32 @@ use sp_core::H256;
 use std::{marker::PhantomData, sync::Arc};
 //TODO ideally we wouldn't depend on BlockId here. Can we change frontier
 // so it's load_hash helper returns an H256 instead of wrapping it in a BlockId?
-use fc_db::Backend as FrontierBackend;
 use sp_blockchain::HeaderBackend;
 use sp_runtime::traits::Block;
 
 /// An RPC endpoint to check for finality of blocks and transactions in Moonbeam
 #[rpc(server)]
+#[async_trait::async_trait]
 pub trait MoonbeamFinalityApi {
 	/// Reports whether a Substrate or Ethereum block is finalized.
 	/// Returns false if the block is not found.
 	#[method(name = "moon_isBlockFinalized")]
-	async fn is_block_finalized(&self, block_hash: H256) -> RpcResult<bool>;
+	fn is_block_finalized(&self, block_hash: H256) -> RpcResult<bool>;
 
 	/// Reports whether an Ethereum transaction is finalized.
 	/// Returns false if the transaction is not found
 	#[method(name = "moon_isTxFinalized")]
-	async fn is_tx_finalized(&self, tx_hash: H256) -> RpcResult<bool>;
+	fn is_tx_finalized(&self, tx_hash: H256) -> RpcResult<bool>;
 }
 
 pub struct MoonbeamFinality<B: Block, C> {
-	pub backend: Arc<FrontierBackend<B>>,
+	pub backend: Arc<dyn fc_db::BackendReader<B> + Send + Sync>,
 	pub client: Arc<C>,
 	_phdata: PhantomData<B>,
 }
 
 impl<B: Block, C> MoonbeamFinality<B, C> {
-	pub fn new(client: Arc<C>, backend: Arc<FrontierBackend<B>>) -> Self {
+	pub fn new(client: Arc<C>, backend: Arc<dyn fc_db::BackendReader<B> + Send + Sync>) -> Self {
 		Self {
 			backend,
 			client,
@@ -58,39 +58,37 @@ where
 	B: Block<Hash = H256>,
 	C: HeaderBackend<B> + Send + Sync + 'static,
 {
-	async fn is_block_finalized(&self, raw_hash: H256) -> RpcResult<bool> {
-		let backend = self.backend.clone();
+	fn is_block_finalized(&self, raw_hash: H256) -> RpcResult<bool> {
 		let client = self.client.clone();
-		is_block_finalized_inner::<B, C>(&backend, &client, raw_hash).await?
+		is_block_finalized_inner::<B, C>(self.backend.as_ref(), &client, raw_hash)
 	}
 
-	async fn is_tx_finalized(&self, tx_hash: H256) -> RpcResult<bool> {
-		let backend = self.backend.clone();
+	fn is_tx_finalized(&self, tx_hash: H256) -> RpcResult<bool> {
 		let client = self.client.clone();
+
 		if let Some((ethereum_block_hash, _ethereum_index)) =
-			frontier_backend_client::load_transactions::<B, C>(
+			futures::executor::block_on(frontier_backend_client::load_transactions::<B, C>(
 				&client,
-				backend.as_ref(),
+				self.backend.as_ref(),
 				tx_hash,
 				true,
-			)? {
-			is_block_finalized_inner::<B, C>(&backend, &client, ethereum_block_hash).await?
+			))? {
+			is_block_finalized_inner::<B, C>(self.backend.as_ref(), &client, ethereum_block_hash)
 		} else {
 			Ok(false)
 		}
 	}
 }
 
-async fn is_block_finalized_inner<B: Block<Hash = H256>, C: HeaderBackend<B> + 'static>(
-	backend: &FrontierBackend<B>,
+fn is_block_finalized_inner<B: Block<Hash = H256>, C: HeaderBackend<B> + 'static>(
+	backend: &(dyn fc_db::BackendReader<B> + Send + Sync),
 	client: &C,
 	raw_hash: H256,
 ) -> RpcResult<bool> {
 	let substrate_hash =
-		match frontier_backend_client::load_hash::<B, C>(client, backend, raw_hash)
-			.await
-			.map_err(|err| internal_err(format!("{:?}", err)))?
-		{
+		match futures::executor::block_on(frontier_backend_client::load_hash::<B, C>(
+			client, backend, raw_hash,
+		))? {
 			// If we find this hash in the frontier data base, we know it is an eth hash
 			Some(hash) => hash,
 			// Otherwise, we assume this is a Substrate hash.

@@ -25,7 +25,7 @@ import {
 import { registerLocalAssetWithMeta } from "../../util/assets";
 import { getCompiled } from "../../util/contracts";
 import { customWeb3Request } from "../../util/providers";
-import { describeDevMoonbeamAllEthTxTypes } from "../../util/setup-dev-tests";
+import { describeDevMoonbeam, describeDevMoonbeamAllEthTxTypes } from "../../util/setup-dev-tests";
 import {
   ALITH_TRANSACTION_TEMPLATE,
   BALTATHAR_TRANSACTION_TEMPLATE,
@@ -45,13 +45,23 @@ const SELECTORS = {
 };
 const GAS_PRICE = "0x" + (10_000_000_000).toString(16);
 const LOCAL_ASSET_EXTENDED_ERC20_CONTRACT = getCompiled("LocalAssetExtendedErc20Instance");
-const ROLES_CONTRACT = getCompiled("Roles");
+const ROLES_CONTRACT = getCompiled("precompiles/assets-erc20/Roles");
 
 const LOCAL_ASSET_EXTENDED_ERC20_INTERFACE = new ethers.utils.Interface(
   LOCAL_ASSET_EXTENDED_ERC20_CONTRACT.contract.abi
 );
 
 const ROLES_INTERFACE = new ethers.utils.Interface(ROLES_CONTRACT.contract.abi);
+
+function call_params(data, to) {
+  return {
+    from: alith.address,
+    value: "0x0",
+    to,
+    data: data,
+    gasPrice: GAS_PRICE,
+  };
+}
 
 describeDevMoonbeamAllEthTxTypes(
   "Precompiles - Assets-ERC20 Wasm",
@@ -92,14 +102,13 @@ describeDevMoonbeamAllEthTxTypes(
         []
       );
 
+      const params = call_params(data, assetAddress);
+      const estimate = await customWeb3Request(context.web3, "eth_estimateGas", [params]);
+
       const tx_call = await customWeb3Request(context.web3, "eth_call", [
         {
-          from: alith.address,
-          value: "0x0",
-          gas: "0x10000",
-          gasPrice: GAS_PRICE,
-          to: assetAddress,
-          data: data,
+          gas: estimate.result,
+          ...params,
         },
       ]);
 
@@ -117,15 +126,13 @@ describeDevMoonbeamAllEthTxTypes(
         "symbol",
         []
       );
+      const params = call_params(data, assetAddress);
+      const estimate = await customWeb3Request(context.web3, "eth_estimateGas", [params]);
 
       const tx_call = await customWeb3Request(context.web3, "eth_call", [
         {
-          from: alith.address,
-          value: "0x0",
-          gas: "0x10000",
-          gasPrice: GAS_PRICE,
-          to: assetAddress,
-          data: data,
+          gas: estimate.result,
+          ...params,
         },
       ]);
 
@@ -143,15 +150,13 @@ describeDevMoonbeamAllEthTxTypes(
         "decimals",
         []
       );
+      const params = call_params(data, assetAddress);
+      const estimate = await customWeb3Request(context.web3, "eth_estimateGas", [params]);
 
       const tx_call = await customWeb3Request(context.web3, "eth_call", [
         {
-          from: alith.address,
-          value: "0x0",
-          gas: "0x10000",
-          gasPrice: GAS_PRICE,
-          to: assetAddress,
-          data: data,
+          gas: estimate.result,
+          ...params,
         },
       ]);
 
@@ -165,15 +170,13 @@ describeDevMoonbeamAllEthTxTypes(
         "balanceOf",
         [baltathar.address]
       );
+      const params = call_params(data, assetAddress);
+      const estimate = await customWeb3Request(context.web3, "eth_estimateGas", [params]);
 
       const tx_call = await customWeb3Request(context.web3, "eth_call", [
         {
-          from: alith.address,
-          value: "0x0",
-          gas: "0x10000",
-          gasPrice: GAS_PRICE,
-          to: assetAddress,
-          data: data,
+          gas: estimate.result,
+          ...params,
         },
       ]);
       let amount = new BN(100000000000000);
@@ -188,14 +191,13 @@ describeDevMoonbeamAllEthTxTypes(
         "totalSupply",
         []
       );
+      const params = call_params(data, assetAddress);
+      const estimate = await customWeb3Request(context.web3, "eth_estimateGas", [params]);
+
       const tx_call = await customWeb3Request(context.web3, "eth_call", [
         {
-          from: alith.address,
-          value: "0x0",
-          gas: "0x10000",
-          gasPrice: GAS_PRICE,
-          to: assetAddress,
-          data: data,
+          gas: estimate.result,
+          ...params,
         },
       ]);
 
@@ -211,14 +213,13 @@ describeDevMoonbeamAllEthTxTypes(
         "owner",
         []
       );
+      const params = call_params(data, assetAddress);
+      const estimate = await customWeb3Request(context.web3, "eth_estimateGas", [params]);
+
       const tx_call = await customWeb3Request(context.web3, "eth_call", [
         {
-          from: alith.address,
-          value: "0x0",
-          gas: "0x10000",
-          gasPrice: GAS_PRICE,
-          to: assetAddress,
-          data: data,
+          gas: estimate.result,
+          ...params,
         },
       ]);
 
@@ -232,14 +233,13 @@ describeDevMoonbeamAllEthTxTypes(
         "freezer",
         []
       );
+      const params = call_params(data, assetAddress);
+      const estimate = await customWeb3Request(context.web3, "eth_estimateGas", [params]);
+
       const tx_call = await customWeb3Request(context.web3, "eth_call", [
         {
-          from: alith.address,
-          value: "0x0",
-          gas: "0x10000",
-          gasPrice: GAS_PRICE,
-          to: assetAddress,
-          data: data,
+          gas: estimate.result,
+          ...params,
         },
       ]);
 
@@ -253,14 +253,13 @@ describeDevMoonbeamAllEthTxTypes(
         "admin",
         []
       );
+      const params = call_params(data, assetAddress);
+      const estimate = await customWeb3Request(context.web3, "eth_estimateGas", [params]);
+
       const tx_call = await customWeb3Request(context.web3, "eth_call", [
         {
-          from: alith.address,
-          value: "0x0",
-          gas: "0x10000",
-          gasPrice: GAS_PRICE,
-          to: assetAddress,
-          data: data,
+          gas: estimate.result,
+          ...params,
         },
       ]);
 
@@ -274,14 +273,13 @@ describeDevMoonbeamAllEthTxTypes(
         "issuer",
         []
       );
+      const params = call_params(data, assetAddress);
+      const estimate = await customWeb3Request(context.web3, "eth_estimateGas", [params]);
+
       const tx_call = await customWeb3Request(context.web3, "eth_call", [
         {
-          from: alith.address,
-          value: "0x0",
-          gas: "0x10000",
-          gasPrice: GAS_PRICE,
-          to: assetAddress,
-          data: data,
+          gas: estimate.result,
+          ...params,
         },
       ]);
 
@@ -955,7 +953,7 @@ describeDevMoonbeamAllEthTxTypes(
 
       let alithFrozen = await context.polkadotApi.query.localAssets.account(assetId, alith.address);
 
-      expect(alithFrozen.unwrap().isFrozen.isTrue).to.be.true;
+      expect(alithFrozen.unwrap().status.isFrozen).to.be.true;
     });
   },
   true
@@ -1004,7 +1002,7 @@ describeDevMoonbeamAllEthTxTypes(
         alith.address
       );
 
-      expect(baltatharFrozen.unwrap().isFrozen.isFalse).to.be.true;
+      expect(baltatharFrozen.unwrap().status.isFrozen).to.be.false;
     });
   },
   true
@@ -1272,3 +1270,66 @@ describeDevMoonbeamAllEthTxTypes(
   },
   true
 );
+
+describeDevMoonbeam("Precompiles - Assets-ERC20 Wasm", (context) => {
+  let assetAddress: string[] = [];
+  before("Setup contract and mock balance", async () => {
+    // register, setMeta & mint local Asset
+    assetAddress[0] = (
+      await registerLocalAssetWithMeta(context, alith, {
+        registrerAccount: baltathar,
+        mints: [{ account: alith, amount: 2n ** 128n - 3n }],
+      })
+    ).assetAddress;
+    assetAddress[1] = (
+      await registerLocalAssetWithMeta(context, alith, {
+        registrerAccount: baltathar,
+        mints: [{ account: alith, amount: 2n ** 128n - 3n }],
+      })
+    ).assetAddress;
+
+    const { rawTx } = await createContract(context, "LocalAssetExtendedErc20Instance");
+    await context.createBlock(rawTx);
+  });
+
+  it("succeeds to mint to 2^128 - 1", async function () {
+    let data = LOCAL_ASSET_EXTENDED_ERC20_INTERFACE.encodeFunctionData(
+      // action
+      "mint",
+      [baltathar.address, 2]
+    );
+
+    const { result } = await context.createBlock(
+      createTransaction(context, {
+        ...BALTATHAR_TRANSACTION_TEMPLATE,
+        to: assetAddress[0],
+        data: data,
+      })
+    );
+
+    const receipt = await context.web3.eth.getTransactionReceipt(result.hash);
+
+    expect(receipt.status).to.equal(true);
+  });
+
+  // Depends on previous test
+  it("fails to mint over 2^128 total supply", async function () {
+    let data = LOCAL_ASSET_EXTENDED_ERC20_INTERFACE.encodeFunctionData(
+      // action
+      "mint",
+      [baltathar.address, 3]
+    );
+
+    const { result } = await context.createBlock(
+      createTransaction(context, {
+        ...BALTATHAR_TRANSACTION_TEMPLATE,
+        to: assetAddress[1],
+        data: data,
+      })
+    );
+
+    const receipt = await context.web3.eth.getTransactionReceipt(result.hash);
+
+    expect(receipt.status).to.equal(false);
+  });
+});

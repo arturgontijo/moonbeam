@@ -17,7 +17,6 @@
 //! Precompile to call pallet-crowdloan-rewards runtime methods via the EVM
 
 #![cfg_attr(not(feature = "std"), no_std)]
-#![feature(assert_matches)]
 
 use fp_evm::PrecompileHandle;
 use frame_support::{
@@ -61,7 +60,9 @@ where
 	#[precompile::public("is_contributor(address)")]
 	#[precompile::view]
 	fn is_contributor(handle: &mut impl PrecompileHandle, contributor: Address) -> EvmResult<bool> {
-		handle.record_cost(RuntimeHelper::<Runtime>::db_read_gas_cost())?; // accounts_payable
+		// AccountsPayable: Blake2128(16) + 20 + RewardInfo(16 + 16 + UnBoundedVec<AccountId32(32)>)
+		// TODO RewardInfo.contributed_relay_addresses is unbounded, we set a safe length of 100.
+		handle.record_db_read::<Runtime>(3268)?;
 
 		let contributor: H160 = contributor.into();
 
@@ -89,7 +90,9 @@ where
 		handle: &mut impl PrecompileHandle,
 		contributor: Address,
 	) -> EvmResult<(U256, U256)> {
-		handle.record_cost(RuntimeHelper::<Runtime>::db_read_gas_cost())?; // accounts_payable
+		// AccountsPayable: Blake2128(16) + 20 + RewardInfo(16 + 16 + UnBoundedVec<AccountId32(32)>)
+		// TODO RewardInfo.contributed_relay_addresses is unbounded, we set a safe length of 100.
+		handle.record_db_read::<Runtime>(3268)?;
 
 		let contributor: H160 = contributor.into();
 

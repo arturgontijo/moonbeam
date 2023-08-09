@@ -33,17 +33,21 @@ describeSmokeSuite(
       const XCM_TRANSACTOR_V1_PRECOMPILE = "0x0000000000000000000000000000000000000806";
       const XCM_TRANSACTOR_V2_PRECOMPILE = "0x000000000000000000000000000000000000080D";
 
-      const RELAY_ENCODER_CONTRACT_JSON = getCompiled("RelayEncoder");
+      const RELAY_ENCODER_CONTRACT_JSON = getCompiled("precompiles/relay-encoder/RelayEncoder");
       const RELAY_ENCODER_INTERFACE = new ethers.utils.Interface(
         RELAY_ENCODER_CONTRACT_JSON.contract.abi
       );
 
-      const XCM_TRANSACTOR_V1_JSON = getCompiled("XcmTransactorV1");
+      const XCM_TRANSACTOR_V1_JSON = getCompiled(
+        "precompiles/xcm-transactor/src/v1/XcmTransactorV1"
+      );
       const XCM_TRANSACTOR_V1_INTERFACE = new ethers.utils.Interface(
         XCM_TRANSACTOR_V1_JSON.contract.abi
       );
 
-      const XCM_TRANSACTOR_V2_JSON = getCompiled("XcmTransactorV2");
+      const XCM_TRANSACTOR_V2_JSON = getCompiled(
+        "precompiles/xcm-transactor/src/v2/XcmTransactorV2"
+      );
       const XCM_TRANSACTOR_V2_INTERFACE = new ethers.utils.Interface(
         XCM_TRANSACTOR_V2_JSON.contract.abi
       );
@@ -94,20 +98,17 @@ describeSmokeSuite(
         debug(`Runtime version is ${rtVersion}, which is less than 2100. Skipping test. `);
         this.skip();
       }
-      const callHex = context.relayApi.tx.hrmp.hrmpCloseChannel([2000, 2001]).method.toHex();
+      const callHex = context.relayApi.tx.hrmp
+        .hrmpCloseChannel({ sender: 2000, recipient: 2001 })
+        .method.toHex();
       const resp = await relayEncoder.encodeHrmpCloseChannel(2000, 2001);
       expect(resp, "Mismatched encoding between relaychain and local values").to.equals(callHex);
     });
 
     testIt("C400", "should have matching indices for Staking.Bond", async function () {
-      const callHex = context.relayApi.tx.staking
-        .bond(ALITH_SESSION_ADDRESS, 10000000000, "Staked")
-        .method.toHex();
-      const resp = await relayEncoder.encodeBond(
-        ALITH_SESSION_ADDRESS,
-        10000000000,
-        hexToU8a("0x00")
-      );
+      // @ts-ignore
+      const callHex = context.relayApi.tx.staking.bond(10000000000, "Staked").method.toHex();
+      const resp = await relayEncoder.encodeBond(10000000000, hexToU8a("0x00"));
       expect(resp, "Mismatched encoding between relaychain and local values").to.equals(callHex);
     });
 
@@ -137,9 +138,10 @@ describeSmokeSuite(
 
     testIt("C900", "should have matching indices for Staking.SetController", async function () {
       const callHex = context.relayApi.tx.staking
-        .setController(ALITH_SESSION_ADDRESS)
+        // @ts-ignore
+        .setController()
         .method.toHex();
-      const resp = await relayEncoder.encodeSetController(ALITH_SESSION_ADDRESS);
+      const resp = await relayEncoder.encodeSetController();
       expect(resp, "Mismatched encoding between relaychain and local values").to.equals(callHex);
     });
 

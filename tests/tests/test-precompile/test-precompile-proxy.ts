@@ -16,11 +16,12 @@ import {
   CONTRACT_PROXY_TYPE_GOVERNANCE,
   CONTRACT_PROXY_TYPE_STAKING,
   PRECOMPILE_PROXY_ADDRESS,
+  PRECOMPILE_NATIVE_ERC20_ADDRESS,
 } from "../../util/constants";
-import { expectEVMResult } from "../../util/eth-transactions";
+import { expectEVMResult, extractRevertReason } from "../../util/eth-transactions";
 import { web3EthCall } from "../../util/providers";
 
-const PROXY_CONTRACT_JSON = getCompiled("Proxy");
+const PROXY_CONTRACT_JSON = getCompiled("precompiles/proxy/Proxy");
 const PROXY_INTERFACE = new ethers.utils.Interface(PROXY_CONTRACT_JSON.contract.abi);
 
 describeDevMoonbeam("Precompile - Proxy - add proxy fails if pre-existing proxy", (context) => {
@@ -52,6 +53,9 @@ describeDevMoonbeam("Precompile - Proxy - add proxy fails if pre-existing proxy"
       })
     );
     expectEVMResult(result.events, "Revert");
+
+    const revertReason = await extractRevertReason(result.hash, context.ethers);
+    expect(revertReason).to.contain("Cannot add more than one proxy");
   });
 });
 
@@ -103,6 +107,12 @@ describeDevMoonbeam("Precompile - Proxy - remove proxy fails if no existing prox
       })
     );
     expectEVMResult(result.events, "Revert");
+
+    const revertReason = await extractRevertReason(result.hash, context.ethers);
+    // Full error expected
+    // Dispatched call failed with error: Module(ModuleError { index: 22, error: [1, 0, 0, 0],
+    // message: Some("NotFound") } )
+    expect(revertReason).to.contain("NotFound");
   });
 });
 
@@ -312,9 +322,10 @@ describeDevMoonbeam("Precompile - Proxy - is proxy - succeeds if exists", (conte
 
 describeDevMoonbeam("Pallet proxy - shouldn't accept unknown proxy", (context) => {
   it("shouldn't accept unknown proxy", async function () {
+    context.web3.eth.handleRevert = true;
     const beforeCharlethBalance = BigInt(await context.web3.eth.getBalance(CHARLETH_ADDRESS));
     const {
-      result: { events },
+      result: { events, hash },
     } = await context.createBlock(
       createTransaction(context, {
         ...BALTATHAR_TRANSACTION_TEMPLATE,
@@ -323,8 +334,10 @@ describeDevMoonbeam("Pallet proxy - shouldn't accept unknown proxy", (context) =
         value: 100,
       })
     );
-    // TODO: check revert reason
+
     expectEVMResult(events, "Revert");
+    const revertReason = await extractRevertReason(hash, context.ethers);
+    expect(revertReason).to.contain("Not proxy");
     const afterCharlethBalance = BigInt(await context.web3.eth.getBalance(CHARLETH_ADDRESS));
     expect(afterCharlethBalance - beforeCharlethBalance).to.be.eq(0n);
   });
@@ -398,7 +411,7 @@ describeDevMoonbeam("Pallet proxy - shouldn't accept removed proxy", (context) =
     expectEVMResult(events2, "Succeed");
 
     const {
-      result: { events: events3 },
+      result: { events: events3, hash: hash3 },
     } = await context.createBlock(
       createTransaction(context, {
         ...BALTATHAR_TRANSACTION_TEMPLATE,
@@ -408,6 +421,9 @@ describeDevMoonbeam("Pallet proxy - shouldn't accept removed proxy", (context) =
       })
     );
     expectEVMResult(events3, "Revert");
+
+    const revertReason = await extractRevertReason(hash3, context.ethers);
+    expect(revertReason).to.contain("Not proxy");
     const afterCharlethBalance = BigInt(await context.web3.eth.getBalance(CHARLETH_ADDRESS));
     expect(afterCharlethBalance - beforeCharlethBalance).to.be.eq(0n);
   });
@@ -432,7 +448,7 @@ describeDevMoonbeam("Pallet proxy - shouldn't accept instant for delayed proxy",
     expectEVMResult(events, "Succeed");
 
     const {
-      result: { events: events2 },
+      result: { events: events2, hash: hash2 },
     } = await context.createBlock(
       createTransaction(context, {
         ...BALTATHAR_TRANSACTION_TEMPLATE,
@@ -442,7 +458,109 @@ describeDevMoonbeam("Pallet proxy - shouldn't accept instant for delayed proxy",
       })
     );
     expectEVMResult(events2, "Revert");
+    const revertReason = await extractRevertReason(hash2, context.ethers);
+    expect(revertReason).to.contain("Unannounced");
     const afterCharlethBalance = BigInt(await context.web3.eth.getBalance(CHARLETH_ADDRESS));
     expect(afterCharlethBalance - beforeCharlethBalance).to.be.eq(0n);
+  });
+});
+
+describeDevMoonbeam("Pallet proxy - should transfer using value", (context) => {
+  it("should transfer using value", async () => {
+    const {
+      result: { events },
+    } = await context.createBlock(
+      createTransaction(context, {
+        ...ALITH_TRANSACTION_TEMPLATE,
+        to: PRECOMPILE_PROXY_ADDRESS,
+        data: PROXY_INTERFACE.encodeFunctionData("addProxy", [
+          BALTATHAR_ADDRESS,
+          CONTRACT_PROXY_TYPE_ANY,
+          0,
+        ]),
+      })
+    );
+    expectEVMResult(events, "Succeed");
+
+    const beforeAlithBalance = BigInt(await context.web3.eth.getBalance(ALITH_ADDRESS));
+    const beforeCharlethBalance = BigInt(await context.web3.eth.getBalance(CHARLETH_ADDRESS));
+    const value = BigInt(context.web3.utils.toWei("10", "ether"));
+
+    const {
+      result: { events: events2, hash: hash2 },
+    } = await context.createBlock(
+      createTransaction(context, {
+        ...BALTATHAR_TRANSACTION_TEMPLATE,
+        to: PRECOMPILE_PROXY_ADDRESS,
+        data: PROXY_INTERFACE.encodeFunctionData("proxy", [ALITH_ADDRESS, CHARLETH_ADDRESS, []]),
+        value: value.toString(),
+      })
+    );
+
+    expectEVMResult(events2, "Succeed");
+
+    const { gasUsed } = await context.web3.eth.getTransactionReceipt(hash2);
+    expect(gasUsed).to.equal(41780);
+
+    const afterAlithBalance = BigInt(await context.web3.eth.getBalance(ALITH_ADDRESS));
+    const afterCharlethBalance = BigInt(await context.web3.eth.getBalance(CHARLETH_ADDRESS));
+    const afterProxyPrecompileBalance = BigInt(
+      await context.web3.eth.getBalance(PRECOMPILE_PROXY_ADDRESS)
+    );
+
+    expect(beforeAlithBalance - afterAlithBalance).to.equal(value);
+    expect(afterCharlethBalance - beforeCharlethBalance).to.equal(value);
+    expect(afterProxyPrecompileBalance).to.equal(0n);
+  });
+});
+
+describeDevMoonbeam("Pallet proxy - should transfer using balances precompile", (context) => {
+  it("should transfer using balances precompile", async () => {
+    const NATIVE_ERC20_CONTRACT = getCompiled("precompiles/balances-erc20/IERC20");
+    const NATIVE_ERC20_INTERFACE = new ethers.utils.Interface(NATIVE_ERC20_CONTRACT.contract.abi);
+
+    const {
+      result: { events },
+    } = await context.createBlock(
+      createTransaction(context, {
+        ...ALITH_TRANSACTION_TEMPLATE,
+        to: PRECOMPILE_PROXY_ADDRESS,
+        data: PROXY_INTERFACE.encodeFunctionData("addProxy", [
+          BALTATHAR_ADDRESS,
+          CONTRACT_PROXY_TYPE_ANY,
+          0,
+        ]),
+      })
+    );
+    expectEVMResult(events, "Succeed");
+
+    const beforeAlithBalance = BigInt(await context.web3.eth.getBalance(ALITH_ADDRESS));
+    const beforeCharlethBalance = BigInt(await context.web3.eth.getBalance(CHARLETH_ADDRESS));
+    const value = BigInt(context.web3.utils.toWei("10", "ether"));
+
+    const {
+      result: { events: events2, hash: hash2 },
+    } = await context.createBlock(
+      createTransaction(context, {
+        ...BALTATHAR_TRANSACTION_TEMPLATE,
+        to: PRECOMPILE_PROXY_ADDRESS,
+        data: PROXY_INTERFACE.encodeFunctionData("proxy", [
+          ALITH_ADDRESS,
+          PRECOMPILE_NATIVE_ERC20_ADDRESS,
+          NATIVE_ERC20_INTERFACE.encodeFunctionData("transfer", [CHARLETH_ADDRESS, value]),
+        ]),
+      })
+    );
+
+    expectEVMResult(events2, "Succeed");
+
+    const { gasUsed } = await context.web3.eth.getTransactionReceipt(hash2);
+    expect(gasUsed).to.equal(34885);
+
+    const afterAlithBalance = BigInt(await context.web3.eth.getBalance(ALITH_ADDRESS));
+    const afterCharlethBalance = BigInt(await context.web3.eth.getBalance(CHARLETH_ADDRESS));
+
+    expect(beforeAlithBalance - afterAlithBalance).to.equal(value);
+    expect(afterCharlethBalance - beforeCharlethBalance).to.equal(value);
   });
 });

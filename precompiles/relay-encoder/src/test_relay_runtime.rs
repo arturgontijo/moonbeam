@@ -16,7 +16,7 @@
 
 use crate::AvailableStakeCalls;
 use crate::StakeEncodeCall;
-use cumulus_primitives_core::{relay_chain::v2::HrmpChannelId, ParaId};
+use cumulus_primitives_core::{relay_chain::HrmpChannelId, ParaId};
 use parity_scale_codec::{Decode, Encode};
 use sp_runtime::traits::{AccountIdLookup, StaticLookup};
 use sp_runtime::AccountId32;
@@ -35,7 +35,6 @@ pub enum StakeCall {
 	#[codec(index = 0u16)]
 	// the index should match the position of the dispatchable in the target pallet
 	Bond(
-		<AccountIdLookup<AccountId32, ()> as StaticLookup>::Source,
 		#[codec(compact)] cumulus_primitives_core::relay_chain::Balance,
 		pallet_staking::RewardDestination<AccountId32>,
 	),
@@ -54,7 +53,7 @@ pub enum StakeCall {
 	#[codec(index = 7u16)]
 	SetPayee(pallet_staking::RewardDestination<AccountId32>),
 	#[codec(index = 8u16)]
-	SetController(<AccountIdLookup<AccountId32, ()> as StaticLookup>::Source),
+	SetController,
 	#[codec(index = 19u16)]
 	Rebond(#[codec(compact)] cumulus_primitives_core::relay_chain::Balance),
 }
@@ -68,6 +67,8 @@ pub enum HrmpCall {
 	AcceptOpenChannel(ParaId),
 	#[codec(index = 2u8)]
 	CloseChannel(HrmpChannelId),
+	#[codec(index = 6u8)]
+	CancelOpenChannel(HrmpChannelId, u32),
 }
 
 pub struct TestEncoder;
@@ -75,9 +76,7 @@ pub struct TestEncoder;
 impl StakeEncodeCall for TestEncoder {
 	fn encode_call(call: AvailableStakeCalls) -> Vec<u8> {
 		match call {
-			AvailableStakeCalls::Bond(a, b, c) => {
-				RelayCall::Stake(StakeCall::Bond(a.into(), b, c)).encode()
-			}
+			AvailableStakeCalls::Bond(b, c) => RelayCall::Stake(StakeCall::Bond(b, c)).encode(),
 
 			AvailableStakeCalls::BondExtra(a) => RelayCall::Stake(StakeCall::BondExtra(a)).encode(),
 
@@ -95,8 +94,8 @@ impl StakeEncodeCall for TestEncoder {
 				RelayCall::Stake(StakeCall::SetPayee(a.into())).encode()
 			}
 
-			AvailableStakeCalls::SetController(a) => {
-				RelayCall::Stake(StakeCall::SetController(a.into())).encode()
+			AvailableStakeCalls::SetController => {
+				RelayCall::Stake(StakeCall::SetController).encode()
 			}
 
 			AvailableStakeCalls::Rebond(a) => {
@@ -127,6 +126,9 @@ impl xcm_primitives::HrmpEncodeCall for TestEncoder {
 			}
 			xcm_primitives::HrmpAvailableCalls::CloseChannel(a) => {
 				Ok(RelayCall::Hrmp(HrmpCall::CloseChannel(a.clone())).encode())
+			}
+			xcm_primitives::HrmpAvailableCalls::CancelOpenRequest(a, b) => {
+				Ok(RelayCall::Hrmp(HrmpCall::CancelOpenChannel(a.clone(), b.clone())).encode())
 			}
 		}
 	}

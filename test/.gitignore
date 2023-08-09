@@ -1,0 +1,12 @@
+tmp/*
+*.sqlite
+*.wasm
+
+moonbeam
+polkadot
+
+*spec.json
+html
+
+contracts/cache
+contracts/out

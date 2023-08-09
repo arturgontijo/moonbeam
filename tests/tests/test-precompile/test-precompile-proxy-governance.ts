@@ -21,9 +21,9 @@ import {
   ETHAN_TRANSACTION_TEMPLATE,
 } from "../../util/transactions";
 
-const DEMOCRACY_CONTRACT = getCompiled("Democracy");
+const DEMOCRACY_CONTRACT = getCompiled("precompiles/pallet-democracy/Democracy");
 const DEMOCRACY_INTERFACE = new ethers.utils.Interface(DEMOCRACY_CONTRACT.contract.abi);
-const PROXY_CONTRACT_JSON = getCompiled("Proxy");
+const PROXY_CONTRACT_JSON = getCompiled("precompiles/proxy/Proxy");
 const PROXY_INTERFACE = new ethers.utils.Interface(PROXY_CONTRACT_JSON.contract.abi);
 
 const proposalHash = "0xf3d039875302d49d52fb1af6877a2c46bc55b004afb8130f94dd9d0489ca3185";
@@ -105,7 +105,7 @@ describeDevMoonbeam("Proxing governance (through proxy precompile)", (context) =
     // Verify that dorothy hasn't paid for the transaction but the vote locked her tokens
     let dorothyAccountData = await context.polkadotApi.query.system.account(DOROTHY_ADDRESS);
     expect(dorothyAccountData.data.free.toBigInt()).to.equal(dorothyPreBalance);
-    expect(dorothyAccountData.data.miscFrozen.toBigInt()).to.equal(VOTE_AMOUNT);
+    expect(dorothyAccountData.data.frozen.toBigInt()).to.equal(VOTE_AMOUNT);
 
     // Verify that vote is registered
     const referendumInfoOf = (

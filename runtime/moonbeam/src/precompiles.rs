@@ -17,7 +17,7 @@
 use crate::{
 	asset_config::{ForeignAssetInstance, LocalAssetInstance},
 	xcm_config::XcmExecutorConfig,
-	CouncilInstance, TechCommitteeInstance, TreasuryCouncilInstance,
+	CouncilInstance, OpenTechCommitteeInstance, TechCommitteeInstance, TreasuryCouncilInstance,
 };
 use frame_support::parameter_types;
 use moonbeam_relay_encoder::polkadot::PolkadotEncoder;
@@ -28,18 +28,23 @@ use pallet_evm_precompile_blake2::Blake2F;
 use pallet_evm_precompile_bn128::{Bn128Add, Bn128Mul, Bn128Pairing};
 use pallet_evm_precompile_call_permit::CallPermitPrecompile;
 use pallet_evm_precompile_collective::CollectivePrecompile;
+use pallet_evm_precompile_conviction_voting::ConvictionVotingPrecompile;
 use pallet_evm_precompile_crowdloan_rewards::CrowdloanRewardsPrecompile;
 use pallet_evm_precompile_democracy::DemocracyPrecompile;
+use pallet_evm_precompile_gmp::GmpPrecompile;
 use pallet_evm_precompile_modexp::Modexp;
 use pallet_evm_precompile_parachain_staking::ParachainStakingPrecompile;
 use pallet_evm_precompile_preimage::PreimagePrecompile;
-use pallet_evm_precompile_proxy::OnlyIsProxy;
-use pallet_evm_precompile_proxy::ProxyPrecompile;
+use pallet_evm_precompile_proxy::{OnlyIsProxyAndProxy, ProxyPrecompile};
 use pallet_evm_precompile_randomness::RandomnessPrecompile;
+use pallet_evm_precompile_referenda::ReferendaPrecompile;
+use pallet_evm_precompile_registry::PrecompileRegistry;
 use pallet_evm_precompile_relay_encoder::RelayEncoderPrecompile;
 use pallet_evm_precompile_sha3fips::Sha3FIPS256;
 use pallet_evm_precompile_simple::{ECRecover, ECRecoverPublicKey, Identity, Ripemd160, Sha256};
-use pallet_evm_precompile_xcm_transactor::v1::XcmTransactorPrecompileV1;
+use pallet_evm_precompile_xcm_transactor::{
+	v1::XcmTransactorPrecompileV1, v2::XcmTransactorPrecompileV2,
+};
 use pallet_evm_precompile_xcm_utils::XcmUtilsPrecompile;
 use pallet_evm_precompile_xtokens::XtokensPrecompile;
 use pallet_evm_precompileset_assets_erc20::{Erc20AssetsPrecompileSet, IsForeign, IsLocal};
@@ -100,7 +105,7 @@ type MoonbeamPrecompilesAt<R> = (
 	PrecompileAt<AddressU64<9>, Blake2F, EthereumPrecompilesChecks>,
 	// Non-Moonbeam specific nor Ethereum precompiles :
 	PrecompileAt<AddressU64<1024>, Sha3FIPS256, (CallableByContract, CallableByPrecompile)>,
-	// PrecompileAt<AddressU64<1025>, Dispatch<R>>,
+	RemovedPrecompileAt<AddressU64<1025>>, // Dispatch<R>
 	PrecompileAt<AddressU64<1026>, ECRecoverPublicKey, (CallableByContract, CallableByPrecompile)>,
 	// Moonbeam specific precompiles:
 	PrecompileAt<
@@ -126,7 +131,11 @@ type MoonbeamPrecompilesAt<R> = (
 	PrecompileAt<
 		AddressU64<2052>,
 		XtokensPrecompile<R>,
-		(CallableByContract, CallableByPrecompile),
+		(
+			SubcallWithMaxNesting<1>,
+			CallableByContract,
+			CallableByPrecompile,
+		),
 	>,
 	PrecompileAt<
 		AddressU64<2053>,
@@ -162,7 +171,16 @@ type MoonbeamPrecompilesAt<R> = (
 		CallPermitPrecompile<R>,
 		(SubcallWithMaxNesting<0>, CallableByContract),
 	>,
-	PrecompileAt<AddressU64<2059>, ProxyPrecompile<R>, CallableByContract<OnlyIsProxy<R>>>,
+	PrecompileAt<
+		AddressU64<2059>,
+		ProxyPrecompile<R>,
+		(
+			CallableByContract<OnlyIsProxyAndProxy<R>>,
+			SubcallWithMaxNesting<0>,
+			// Batch is the only precompile allowed to call Proxy.
+			CallableByPrecompile<OnlyFrom<AddressU64<2056>>>,
+		),
+	>,
 	PrecompileAt<
 		AddressU64<2060>,
 		XcmUtilsPrecompile<R, XcmExecutorConfig>,
@@ -170,12 +188,11 @@ type MoonbeamPrecompilesAt<R> = (
 			pallet_evm_precompile_xcm_utils::AllExceptXcmExecute<R, XcmExecutorConfig>,
 		>,
 	>,
-	// (Moonbase only)
-	// PrecompileAt<
-	// 	AddressU64<2061>,
-	// 	XcmTransactorPrecompileV2<R>,
-	// 	(CallableByContract, CallableByPrecompile),
-	// >,
+	PrecompileAt<
+		AddressU64<2061>,
+		XcmTransactorPrecompileV2<R>,
+		(CallableByContract, CallableByPrecompile),
+	>,
 	PrecompileAt<
 		AddressU64<2062>,
 		CollectivePrecompile<R, CouncilInstance>,
@@ -192,10 +209,31 @@ type MoonbeamPrecompilesAt<R> = (
 		(CallableByContract, CallableByPrecompile),
 	>,
 	PrecompileAt<
+		AddressU64<2065>,
+		ReferendaPrecompile<R, crate::governance::custom_origins::Origin>,
+		(CallableByContract, CallableByPrecompile),
+	>,
+	PrecompileAt<
+		AddressU64<2066>,
+		ConvictionVotingPrecompile<R>,
+		(CallableByContract, CallableByPrecompile),
+	>,
+	PrecompileAt<
 		AddressU64<2067>,
 		PreimagePrecompile<R>,
 		(CallableByContract, CallableByPrecompile),
 	>,
+	PrecompileAt<
+		AddressU64<2068>,
+		CollectivePrecompile<R, OpenTechCommitteeInstance>,
+		(CallableByContract, CallableByPrecompile),
+	>,
+	PrecompileAt<
+		AddressU64<2069>,
+		PrecompileRegistry<R>,
+		(CallableByContract, CallableByPrecompile),
+	>,
+	PrecompileAt<AddressU64<2070>, GmpPrecompile<R>, SubcallWithMaxNesting<0>>,
 );
 
 /// The PrecompileSet installed in the Moonbeam runtime.

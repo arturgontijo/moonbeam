@@ -6,7 +6,7 @@ import { expect } from "chai";
 
 import { generateKeyringPair, alith } from "../util/accounts";
 import {
-  descendOriginFromAddress,
+  descendOriginFromAddress20,
   injectHrmpMessage,
   injectHrmpMessageAndSeal,
   RawXcmMessage,
@@ -27,7 +27,7 @@ describeDevMoonbeam("Trace ethereum xcm #1", (context) => {
     const { contract, rawTx } = await createContract(context, "Incrementor");
     await expectOk(context.createBlock(rawTx));
 
-    const { originAddress, descendOriginAddress } = descendOriginFromAddress(context);
+    const { originAddress, descendOriginAddress } = descendOriginFromAddress20(context);
     const sendingAddress = originAddress;
     const random = generateKeyringPair();
     const transferredBalance = 10_000_000_000_000_000_000n;
@@ -80,17 +80,17 @@ describeDevMoonbeam("Trace ethereum xcm #1", (context) => {
       const transferCall = context.polkadotApi.tx.ethereumXcm.transact(xcmTransaction as any);
       const transferCallEncoded = transferCall?.method.toHex();
       const xcmMessage = new XcmFragment({
-        fees: {
-          multilocation: [
-            {
+        assets: [
+          {
+            multilocation: {
               parents: 0,
               interior: {
                 X1: { PalletInstance: balancesPalletIndex },
               },
             },
-          ],
-          fungible: transferredBalance / 2n,
-        },
+            fungible: transferredBalance / 2n,
+          },
+        ],
         weight_limit: new BN(4000000000),
         descend_origin: sendingAddress,
       })
@@ -145,7 +145,7 @@ describeDevMoonbeam("Trace ethereum xcm #2", (context) => {
     );
     await expectOk(context.createBlock(xcm_rawTx));
 
-    const { originAddress, descendOriginAddress } = descendOriginFromAddress(context);
+    const { originAddress, descendOriginAddress } = descendOriginFromAddress20(context);
     ethereumXcmDescendedOrigin = descendOriginAddress;
     xcmContractAddress = xcm_contract.options.address;
     const sendingAddress = originAddress;
@@ -181,17 +181,17 @@ describeDevMoonbeam("Trace ethereum xcm #2", (context) => {
     const transferCall = context.polkadotApi.tx.ethereumXcm.transact(xcmTransaction as any);
     const transferCallEncoded = transferCall?.method.toHex();
     const xcmMessage = new XcmFragment({
-      fees: {
-        multilocation: [
-          {
+      assets: [
+        {
+          multilocation: {
             parents: 0,
             interior: {
               X1: { PalletInstance: balancesPalletIndex },
             },
           },
-        ],
-        fungible: transferredBalance / 2n,
-      },
+          fungible: transferredBalance / 2n,
+        },
+      ],
       weight_limit: new BN(4000000000),
       descend_origin: sendingAddress,
     })

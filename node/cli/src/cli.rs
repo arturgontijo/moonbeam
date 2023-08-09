@@ -20,7 +20,7 @@
 //! It is built using clap and inherits behavior from Substrate's sc_cli crate.
 
 use clap::Parser;
-use moonbeam_cli_opt::{account_key::GenerateAccountKey, EthApi, Sealing};
+use moonbeam_cli_opt::{account_key::GenerateAccountKey, EthApi, FrontierBackendType, Sealing};
 use moonbeam_service::chain_spec;
 use sc_cli::{Error as CliError, SubstrateCli};
 use std::path::PathBuf;
@@ -149,12 +149,7 @@ pub struct RunCmd {
 	// pub author_id: Option<NimbusId>,
 
 	/// Enable EVM tracing module on a non-authority node.
-	#[clap(
-		long,
-		conflicts_with = "collator",
-		conflicts_with = "validator",
-		value_delimiter = ','
-	)]
+	#[clap(long, value_delimiter = ',')]
 	pub ethapi: Vec<EthApi>,
 
 	/// Number of concurrent tracing tasks. Meant to be shared by both "debug" and "trace" modules.
@@ -179,6 +174,27 @@ pub struct RunCmd {
 	/// Size in bytes of the LRU cache for transactions statuses data.
 	#[clap(long, default_value = "300000000")]
 	pub eth_statuses_cache: usize,
+
+	/// Sets the frontier backend type (KeyValue or Sql)
+	#[arg(long, value_enum, ignore_case = true, default_value_t = FrontierBackendType::default())]
+	pub frontier_backend_type: FrontierBackendType,
+
+	// Sets the SQL backend's pool size.
+	#[arg(long, default_value = "100")]
+	pub frontier_sql_backend_pool_size: u32,
+
+	/// Sets the SQL backend's query timeout in number of VM ops.
+	#[arg(long, default_value = "10000000")]
+	pub frontier_sql_backend_num_ops_timeout: u32,
+
+	/// Sets the SQL backend's auxiliary thread limit.
+	#[arg(long, default_value = "4")]
+	pub frontier_sql_backend_thread_count: u32,
+
+	/// Sets the SQL backend's query timeout in number of VM ops.
+	/// Default value is 200MB.
+	#[arg(long, default_value = "209715200")]
+	pub frontier_sql_backend_cache_size: u64,
 
 	/// Size in bytes of data a raw tracing request is allowed to use.
 	/// Bound the size of memory, stack and storage data.
@@ -214,6 +230,32 @@ pub struct RunCmd {
 	/// telemetry, if telemetry is enabled.
 	#[clap(long)]
 	pub no_hardware_benchmarks: bool,
+}
+
+impl RunCmd {
+	pub fn new_rpc_config(&self) -> moonbeam_cli_opt::RpcConfig {
+		moonbeam_cli_opt::RpcConfig {
+			ethapi: self.ethapi.clone(),
+			ethapi_max_permits: self.ethapi_max_permits,
+			ethapi_trace_max_count: self.ethapi_trace_max_count,
+			ethapi_trace_cache_duration: self.ethapi_trace_cache_duration,
+			eth_log_block_cache: self.eth_log_block_cache,
+			eth_statuses_cache: self.eth_statuses_cache,
+			fee_history_limit: self.fee_history_limit,
+			max_past_logs: self.max_past_logs,
+			relay_chain_rpc_urls: self.base.relay_chain_rpc_urls.clone(),
+			tracing_raw_max_memory_usage: self.tracing_raw_max_memory_usage,
+			frontier_backend_config: match self.frontier_backend_type {
+				FrontierBackendType::KeyValue => moonbeam_cli_opt::FrontierBackendConfig::KeyValue,
+				FrontierBackendType::Sql => moonbeam_cli_opt::FrontierBackendConfig::Sql {
+					pool_size: self.frontier_sql_backend_pool_size,
+					num_ops_timeout: self.frontier_sql_backend_num_ops_timeout,
+					thread_count: self.frontier_sql_backend_thread_count,
+					cache_size: self.frontier_sql_backend_cache_size,
+				},
+			},
+		}
+	}
 }
 
 impl std::ops::Deref for RunCmd {
@@ -272,7 +314,7 @@ pub struct RelayChainCli {
 	pub chain_id: Option<String>,
 
 	/// The base path that should be used by the relay chain.
-	pub base_path: Option<PathBuf>,
+	pub base_path: PathBuf,
 }
 
 impl RelayChainCli {
@@ -283,10 +325,7 @@ impl RelayChainCli {
 	) -> Self {
 		let extension = chain_spec::Extensions::try_get(&*para_config.chain_spec);
 		let chain_id = extension.map(|e| e.relay_chain.clone());
-		let base_path = para_config
-			.base_path
-			.as_ref()
-			.map(|x| x.path().join("polkadot"));
+		let base_path = para_config.base_path.path().join("polkadot");
 		Self {
 			base_path,
 			chain_id,
